@@ -2,25 +2,34 @@ import "dart:async";
 
 import "package:flutter/material.dart";
 
-/// (Automatically) cross-fades between [children] in both directions.
 class WidgetFader extends StatefulWidget {
+  /// (Automatically) cross-fades between [children] in both directions.
+  /// The children expand to fill the stack they're in.
   WidgetFader({
     @required List<Widget> children,
     this.fadeDuration = 750,
     this.pauseDuration = 750,
     this.reverse = false,
-    this.auto = true
+    this.auto = true,
+    this.cover,
+    this.startIndex = 0
   }):
     this.children = children,
-    this._maxIndex = children.length - 1;
+    this._maxIndex = children.length - 1 {
+    print("widgetFader constructor");
+  }
 
   final List<Widget> children;
+  /// A widget on the front to partially cover the visible page.
+  final Widget cover;
+  /// Changes require recreating the state to take effect.
   final int fadeDuration;
   final int pauseDuration;
   final bool reverse;
   final bool auto;
+  final int startIndex;
   final int _maxIndex;
-  
+
   @override
   State<StatefulWidget> createState() {
     return _WidgetFaderState();
@@ -28,65 +37,65 @@ class WidgetFader extends StatefulWidget {
 }
 
 class _WidgetFaderState extends State<WidgetFader> with TickerProviderStateMixin {
+  List<Widget> _children;
   List<AnimationController> _controllers;
   List<Animation> _animations;
-  List<StreamSubscription> _subscriptions = List(2);
+  Timer _autoTimer;
+  int _currentPage;
 
   void initState() { 
     super.initState();
 
     _init();
 
-    if (widget.auto) _play(0);
+    _loop(); 
   }
   
   void _init() {
     _controllers = List.generate(
       widget.children.length,
       (i) => AnimationController(
-        vsync: this, duration: Duration(milliseconds: widget.fadeDuration)
+        vsync: this,
+        duration: Duration(milliseconds: widget.fadeDuration)
       )
     );
     _animations = List.generate(
       widget.children.length,
       (i) => Tween(begin: 0.0, end: 1.0).animate(_controllers[i])
     );
+    _currentPage = widget.startIndex;
+    _children = _buildChildren();
   }
 
-  int _calcToBeFadedIn(int i) {
-    int toBeFadedIn;
+  void _loop() {
+    if (widget.auto) {
+      _play();
+      _autoTimer = Timer.periodic(
+        Duration(milliseconds: widget.fadeDuration + widget.pauseDuration),
+        (_) => _play()
+      );
+    }
+  }
 
+  int _calcNextPage(int page) {
     if (widget.reverse) {
-      toBeFadedIn = i - 1;
+      page--;
 
-      if (toBeFadedIn < 0) toBeFadedIn = widget._maxIndex;
+      if (page < 0) page = widget._maxIndex;
     } else {
-      toBeFadedIn = i + 1;
+      page++;
       
-      if (toBeFadedIn > widget._maxIndex) toBeFadedIn = 0;
+      if (page > widget._maxIndex) page = 0;
     }
 
-    return toBeFadedIn;
+    return page;
   }
 
-  void _play(int i) {
-    int toBeFadedIn;
-    
-    if (i > widget._maxIndex) i = 0;
-    else if (i < 0) i = widget._maxIndex;
-    
-    toBeFadedIn = _calcToBeFadedIn(i);
-    _controllers[i].value = 1.0;
-    _subscriptions[0] = _controllers[i].reverse().asStream().listen(
-      (v) {
-        if (widget.auto) {
-          _subscriptions[1] = Future.delayed(
-            Duration(milliseconds: widget.pauseDuration),
-          ).asStream().listen((v) => _play(toBeFadedIn));
-        }
-      }
-    );
-    _controllers[toBeFadedIn].forward();
+  void _play() {
+    _controllers[_currentPage].value = 1.0;
+    _controllers[_currentPage].reverse();
+    _controllers[_calcNextPage(_currentPage)].forward();
+    _currentPage = _calcNextPage(_currentPage);
   }
 
   List<Widget> _buildChildren() => List.generate(
@@ -99,15 +108,20 @@ class _WidgetFaderState extends State<WidgetFader> with TickerProviderStateMixin
   @override
   Widget build(BuildContext context) {
     return Stack(
-      fit: StackFit.expand,
-      children: _buildChildren(),
+      children: <Widget>[
+        Stack(
+          fit: StackFit.expand,
+          children: _children,
+        ),
+        widget.cover?? Container()
+      ],
     );
   }
 
   @override
   void dispose() {
     _controllers.forEach((c) => c.dispose());
-    _subscriptions?.forEach((s) => s.cancel());
+    _autoTimer.cancel();
 
     super.dispose();
   }
